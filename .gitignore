@@ -1,0 +1,22 @@
+# Datos
+*.xlsx
+*.xls
+*.csv
+*.tsv
+
+# Secrets
+.env
+.streamlit/secrets.toml
+secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Editor
+.vscode/
+.idea/
+.DS_Store
