@@ -76,6 +76,30 @@ st.markdown("""
     div[data-testid="stTabs"] button {
         font-size: 1rem;
     }
+    .sku-base-num {
+        font-size: 1.6rem;
+        font-weight: 800;
+        color: #212529;
+        font-family: monospace;
+    }
+    .planta-badge {
+        display: inline-block;
+        background: #e85d1c;
+        color: white;
+        padding: 5px 14px;
+        border-radius: 14px;
+        margin: 3px 4px;
+        font-weight: 700;
+        font-size: 0.95rem;
+        font-family: monospace;
+    }
+    .planta-card {
+        background: #fff4ee;
+        border: 1px solid #ffd3bd;
+        border-radius: 12px;
+        padding: 14px 18px;
+        margin-bottom: 10px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -636,6 +660,142 @@ def render_analisis_codigo(df_modelo: pd.DataFrame, df_hist: pd.DataFrame,
         tabla_niveles = pd.DataFrame(niveles, columns=["Atributo", "Valor"])
         st.dataframe(tabla_niveles, use_container_width=True, hide_index=True, height=560)
 
+
+# =========================================================
+# RENDER: SKUs MULTI-PLANTA
+# =========================================================
+def render_multi_planta(df_modelo: pd.DataFrame, version_key: str, version_label: str):
+    """Identifica SKUs con la misma base numérica presentes en más de una planta."""
+
+    df_work = df_modelo.copy()
+    extracted = df_work["CODIGO"].astype(str).str.extract(r"^(\d+)([A-Za-z][A-Za-z0-9]*)$")
+    df_work["SKU_BASE"] = extracted[0]
+    df_work["PLANTA"] = extracted[1]
+
+    # Quitar los que no parsearon (códigos raros)
+    df_work = df_work.dropna(subset=["SKU_BASE", "PLANTA"]).copy()
+
+    # Agrupar por SKU base
+    by_base = (
+        df_work.groupby("SKU_BASE")
+        .agg(
+            plantas=("PLANTA", lambda s: sorted(s.unique().tolist())),
+            n_plantas=("PLANTA", "nunique"),
+        )
+        .reset_index()
+    )
+
+    multi = by_base[by_base["n_plantas"] > 1].sort_values(
+        ["n_plantas", "SKU_BASE"], ascending=[False, True]
+    ).reset_index(drop=True)
+
+    # KPIs
+    k1, k2, k3 = st.columns(3)
+    with k1:
+        metric_card("SKUs multi-planta", f"{len(multi):,}")
+        st.caption("Mismo número base en >1 planta")
+    with k2:
+        if not multi.empty:
+            metric_card("Máx. plantas / SKU", f"{int(multi['n_plantas'].max())}")
+            st.caption("El SKU con más cobertura")
+        else:
+            metric_card("Máx. plantas / SKU", "-")
+            st.caption("Sin SKUs multi-planta")
+    with k3:
+        n_plantas_total = df_work["PLANTA"].nunique()
+        metric_card("Plantas distintas", f"{n_plantas_total}")
+        st.caption("Total en el modelo")
+
+    if multi.empty:
+        st.info("No hay SKUs presentes en más de una planta en este modelo.")
+        return
+
+    # Búsqueda
+    search = st.text_input(
+        "Buscar SKU base (parte numérica)",
+        value="",
+        key=f"search_multi_{version_key}",
+    ).strip()
+
+    multi_filtrado = multi.copy()
+    if search:
+        multi_filtrado = multi_filtrado[multi_filtrado["SKU_BASE"].str.contains(search, regex=False)]
+
+    if multi_filtrado.empty:
+        st.info("No hay SKUs multi-planta que coincidan con la búsqueda.")
+        return
+
+    st.caption(f"Mostrando **{len(multi_filtrado):,}** SKUs multi-planta")
+
+    st.markdown("---")
+    st.markdown("##### Vista de SKUs y sus plantas")
+
+    # Mostrar las primeras 30 con vista de card
+    n_mostrar = min(30, len(multi_filtrado))
+    for i in range(n_mostrar):
+        row = multi_filtrado.iloc[i]
+        sku_base = row["SKU_BASE"]
+        plantas = row["plantas"]
+
+        col_sku, col_plantas = st.columns([1, 3])
+        with col_sku:
+            st.markdown(
+                f'<div class="planta-card"><span class="sku-base-num">{sku_base}</span></div>',
+                unsafe_allow_html=True,
+            )
+        with col_plantas:
+            badges = " ".join([f'<span class="planta-badge">{p}</span>' for p in plantas])
+            st.markdown(
+                f'<div class="planta-card">{badges}</div>',
+                unsafe_allow_html=True,
+            )
+
+    if len(multi_filtrado) > n_mostrar:
+        st.caption(f"... y {len(multi_filtrado) - n_mostrar:,} más. Usa el buscador para filtrar.")
+
+    # Tabla descargable
+    st.markdown("---")
+    st.markdown("##### Tabla completa (descargable)")
+
+    tabla = multi_filtrado.copy()
+    tabla["plantas"] = tabla["plantas"].apply(lambda x: ", ".join(x))
+    tabla.columns = ["SKU base", "Plantas", "# Plantas"]
+    st.dataframe(tabla, use_container_width=True, hide_index=True, height=350)
+
+    csv = tabla.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Descargar CSV",
+        data=csv,
+        file_name=f"skus_multi_planta_{version_key}.csv",
+        mime="text/csv",
+        key=f"dl_multi_{version_key}",
+    )
+
+    # Detalle de un SKU
+    st.markdown("---")
+    st.markdown("##### Ver detalle por SKU base")
+
+    sku_seleccionado = st.selectbox(
+        "Selecciona un SKU base",
+        options=multi_filtrado["SKU_BASE"].tolist(),
+        key=f"sel_sku_base_{version_key}",
+    )
+
+    if sku_seleccionado:
+        detalle = df_work[df_work["SKU_BASE"] == sku_seleccionado].copy()
+        cols_preferidas = [
+            "CODIGO", "PLANTA", "DESCRIPCION", "MATERIAL",
+            "STOCK_ULT", "MAC", "SS", "RP", "MAX",
+            "ACCION", "CANTIDAD_SUGERIDA",
+        ]
+        cols_mostrar = [c for c in cols_preferidas if c in detalle.columns]
+        st.dataframe(
+            detalle[cols_mostrar],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
 # =========================================================
 # HEADER
 # =========================================================
@@ -652,7 +812,7 @@ if hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
 st.sidebar.title("Navegación")
 menu = st.sidebar.radio(
     "Ir a sección",
-    ["Matrices", "Base completa", "Análisis por código"],
+    ["Matrices", "Base completa", "Análisis por código", "SKUs Multi-planta"],
 )
 
 # =========================================================
@@ -716,3 +876,17 @@ elif menu == "Análisis por código":
     with sub_v2:
         render_analisis_codigo(df_modelo_v2, df_hist,
                                version_key="v2", version_label="V2 segmentado")
+
+# =========================================================
+# SKUs MULTI-PLANTA — con subtabs V1 / V2
+# =========================================================
+elif menu == "SKUs Multi-planta":
+    st.subheader("SKUs Multi-planta")
+    st.caption("SKUs con la misma base numérica presentes en más de una planta")
+    sub_v1, sub_v2 = st.tabs(["V1 — estocástico", "V2 — segmentado"])
+
+    with sub_v1:
+        render_multi_planta(df_modelo_v1, version_key="v1", version_label="V1")
+
+    with sub_v2:
+        render_multi_planta(df_modelo_v2, version_key="v2", version_label="V2 segmentado")
