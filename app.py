@@ -800,7 +800,6 @@ def render_multi_planta(df_modelo: pd.DataFrame, version_key: str, version_label
 # HEADER
 # =========================================================
 st.title("Inventario - San Miguel")
-st.caption("Modelos v1 (estocástico, desde 2024) y v2 (segmentado por rotación)")
 
 # Mostrar usuario logueado (solo aparece en Streamlit Cloud)
 if hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
